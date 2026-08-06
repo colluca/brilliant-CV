@@ -11,6 +11,7 @@
 
 #let cv-section = _cv.cv-section
 #let cv-entry = _cv.cv-entry
+#let cv-entry-wide-logo = _cv.cv-entry-wide-logo
 #let cv-entry-start = _cv.cv-entry-start
 #let cv-entry-continued = _cv.cv-entry-continued
 #let cv-skill = _cv.cv-skill

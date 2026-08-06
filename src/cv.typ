@@ -45,14 +45,48 @@
   ),
   last-name: str => text(font: header-font, size: 32pt, weight: "bold", str),
   info: body => text(size: header-info-font-size, fill: accent-color, body),
-  quote: str => text(
+  quote: body => text(
     size: 10pt,
     weight: "medium",
     style: "italic",
-    fill: accent-color,
-    str,
+    fill: regular-colors.darkgray,
+    body,
   ),
 )
+
+#let _resolve-header-quote-fill(color, regular-colors, accent-color) = {
+  if color == none or color == "default" or color == "black" {
+    none
+  } else if color == "accent" {
+    accent-color
+  } else if color in _awesome-colors {
+    _awesome-colors.at(color)
+  } else {
+    rgb(color)
+  }
+}
+
+#let _render-header-quote(quote, regular-colors, accent-color) = {
+  if type(quote) == str {
+    quote
+  } else if type(quote) == array {
+    quote.map(segment => {
+      let text-value = segment.at("text", default: "")
+      let fill = _resolve-header-quote-fill(
+        segment.at("color", default: none),
+        regular-colors,
+        accent-color,
+      )
+      if fill == none {
+        text-value
+      } else {
+        text(fill: fill, text-value)
+      }
+    }).join()
+  } else {
+    quote
+  }
+}
 
 /// Personal info icons mapping
 /// -> dictionary
@@ -173,6 +207,8 @@
 /// -> content
 #let _make-header-name-section(
   styles,
+  regular-colors,
+  accent-color,
   display-name,
   first-name,
   last-name,
@@ -191,7 +227,11 @@
     rows.push([#(styles.info)(header-info)])
   }
   if header-quote != none {
-    rows.push([#(styles.quote)(header-quote)])
+    rows.push([#(styles.quote)(_render-header-quote(
+      header-quote,
+      regular-colors,
+      accent-color,
+    ))])
   }
 
   let result = table(
@@ -314,6 +354,8 @@
   // Create components
   let name-section = _make-header-name-section(
     styles,
+    regular-colors,
+    accent-color,
     display-name,
     first-name,
     last-name,
@@ -413,6 +455,7 @@
 ///   Accepts `"first-letters"`, `"full"`, or `"none"`.
 /// - highlight-letters (int): (optional) override `[layout.section].title_highlight_letters`.
 /// - color (color): (optional) override the accent color for this section.
+/// - before-skip (length): (optional) override `[layout] before_section_skip` for this section only, e.g. to pull it closer to the previous section or push it further away.
 /// - metadata (dictionary): (optional) the metadata read from the TOML file.
 /// - awesome-colors (dictionary): (optional) the awesome colors of the CV.
 ///
@@ -428,6 +471,7 @@
   highlight: none,
   highlight-letters: none,
   color: none,
+  before-skip: none,
   metadata: none,
   awesome-colors: _awesome-colors,
 ) = context {
@@ -445,10 +489,11 @@
     section-cfg.at("title_highlight_letters", default: 3)
   }
 
-  let before-section-skip = eval(metadata.layout.at(
-    "before_section_skip",
-    default: "1pt",
-  ))
+  let before-section-skip = if before-skip != none {
+    before-skip
+  } else {
+    eval(metadata.layout.at("before_section_skip", default: "1pt"))
+  }
   let accent-color = _resolve-accent-color(color, awesome-colors, metadata)
 
   let section-title-style(str, color: black) = {
@@ -478,13 +523,14 @@
 
 /// Prepare common entry parameters
 /// -> dictionary
-#let _prepare-entry-params(metadata, awesome-colors, color: none) = {
+#let _prepare-entry-params(metadata, awesome-colors, color: none, before-skip: none) = {
   // Common parameter calculations
   let accent-color = _resolve-accent-color(color, awesome-colors, metadata)
-  let before-entry-skip = eval(metadata.layout.at(
-    "before_entry_skip",
-    default: "1pt",
-  ))
+  let before-entry-skip = if before-skip != none {
+    before-skip
+  } else {
+    eval(metadata.layout.at("before_entry_skip", default: "1pt"))
+  }
   let before-entry-description-skip = eval(metadata.layout.at(
     "before_entry_description_skip",
     default: "1pt",
@@ -505,15 +551,16 @@
 /// Create entry style functions
 /// -> dictionary
 #let _entry-styles(accent-color, before-entry-description-skip) = (
-  a1: str => text(size: 10pt, weight: "bold", str),
+  a1: str => text(size: 10pt, str),
   a2: str => align(right, text(
+    size: 10pt,
     weight: "medium",
     fill: accent-color,
     style: "oblique",
     str,
   )),
   b1: str => text(
-    size: 8pt,
+    size: 12pt,
     fill: accent-color,
     weight: "medium",
     smallcaps(str),
@@ -565,6 +612,9 @@
   location: none,
   description: none,
   logo: "",
+  logo-width: 15%,
+  logo-height: 12pt,
+  grade: none,
   tags: (),
   metadata: metadata,
 ) = {
@@ -583,6 +633,9 @@
 
   v(before-entry-skip)
 
+  // Inset horizontally so entries sit indented relative to the full-width
+  // section header/rule above them.
+  pad(x: 20pt, {
   if entry-type == "full" {
     // Full entry layout (original cv-entry logic)
     //
@@ -692,6 +745,60 @@
     // aggressive collapse is fine. Without a logo the row is just text height
     // and -10pt overlaps the next title (issue #172).
     v(if display-logo and logo != "" { -10pt } else { -6pt })
+  } else if entry-type == "full-wide-logo" {
+    // Wide-logo entry layout: logo, optional society, title, and optional
+    // grade share one line so a landscape/wide logo has room to breathe on
+    // the left. `society` sits directly next to the logo (just the column
+    // gutter between them, no bullet); title and grade each follow behind a
+    // bullet. Date keeps a single right-aligned slot, vertically centered
+    // against that line.
+    let has-logo = display-logo and logo != ""
+    let has-society = not (society == none or society == "")
+    let has-grade = not (grade == none or grade == "")
+
+    // A plain (non-accent) bullet, styled like the rest of the title row.
+    let bullet = (styles.a1)("•")
+    let sep = h(6pt) + bullet + h(6pt)
+
+    let chips = ()
+    if has-society { chips.push((styles.a1)(society)) }
+    chips.push((styles.b1)(title))
+    if has-grade { chips.push((styles.a1)(grade)) }
+    let body = chips.slice(1).fold(chips.at(0), (acc, chip) => acc + sep + chip)
+
+    // Only insert a leading bullet when the logo has nothing else (i.e. no
+    // society) right next to it.
+    let text-area = if has-logo and not has-society { bullet + h(6pt) + body } else { body }
+
+    table(
+      columns: (1fr, date-width),
+      inset: 0pt,
+      stroke: 0pt,
+      gutter: 6pt,
+      align: (x, y) => if x == 1 { right + horizon } else { horizon },
+      table(
+        columns: (if has-logo { logo-width } else { 0% }, 1fr),
+        inset: 0pt,
+        stroke: 0pt,
+        align: horizon,
+        column-gutter: if has-logo { 6pt } else { 0pt },
+        if logo == "" [] else {
+          // Every logo gets the same (logo-width x logo-height) box, so the
+          // title column always starts at the same x position regardless of
+          // aspect ratio. `fit: "contain"` scales the logo to fit inside
+          // that box without distorting it; whichever axis isn't the
+          // binding constraint is left as blank padding around the image.
+          set image(width: 100%, height: logo-height, fit: "contain")
+          logo
+        },
+        text-area,
+      ),
+      (styles.a2)((styles.dates)(date)),
+    )
+    if description != "" and description != none {
+      (styles.description)(description)
+    }
+    _create-entry-tag-list(tags, styles.tag)
   } else if entry-type == "continued" {
     // Entry continued layout (original cv-entry-continued logic)
     // If the date contains a linebreak, use legacy side-to-side layout
@@ -738,6 +845,7 @@
       _create-entry-tag-list(tags, styles.tag)
     }
   }
+  })
 }
 
 
@@ -756,6 +864,7 @@
 /// - logo (content | str): The logo of the society. If empty, no logo will be displayed.
 /// - tags (array): The tags of the entry.
 /// - color (color): (optional) override the accent color for this entry.
+/// - before-skip (length): (optional) override `[layout] before_entry_skip` for this entry only, e.g. to pull two entries closer together or push them further apart.
 /// - metadata (dictionary): (optional) the metadata read from the TOML file.
 /// - awesome-colors (dictionary): (optional) the awesome colors of the CV.
 ///
@@ -785,11 +894,12 @@
   logo: "",
   tags: (),
   color: none,
+  before-skip: none,
   metadata: none,
   awesome-colors: _awesome-colors,
 ) = context {
   let metadata = _resolve-component-metadata(metadata)
-  let params = _prepare-entry-params(metadata, awesome-colors, color: color)
+  let params = _prepare-entry-params(metadata, awesome-colors, color: color, before-skip: before-skip)
 
   _make-cv-entry(
     "full",
@@ -800,6 +910,85 @@
     location: location,
     description: description,
     logo: logo,
+    tags: tags,
+    metadata: metadata,
+  )
+}
+
+/// Add an entry to the CV with a wide (landscape) logo, e.g. a company or
+/// university wordmark rather than a square icon. `logo`, the optional
+/// `society`, `title`, and the optional `grade` are rendered on a single
+/// shared line, freeing up vertical space for the wider logo: `society`
+/// sits directly next to the logo (no bullet between them, since the logo
+/// already identifies it), while `title` and `grade` each follow behind a
+/// bullet. `date` occupies its own right-aligned slot, vertically centered
+/// against that line.
+///
+/// Every logo is placed in the same `logo-width` x `logo-height` box and
+/// scaled to fit inside it without distorting its aspect ratio: whichever
+/// axis isn't the binding constraint (e.g. height, for a wide wordmark) is
+/// left as blank padding, so every entry's title column still starts at the
+/// same position.
+///
+/// - title (str): The title of the entry (role, degree, etc.).
+/// - date (str | content): The date(s) of the entry.
+/// - society (str): (optional) the society of the entry (company, university, etc.), shown right next to the logo.
+/// - grade (str): (optional) a grade/score, shown next to `title` behind a bullet, e.g. a GPA or final mark.
+/// - description (str | array): The description of the entry. It can be a string or an array of content items.
+/// - logo (content | str): The wide/landscape logo of the society. If empty, no logo will be displayed.
+/// - logo-width (ratio): The width of the logo's bounding box, as a fraction of the entry's width. Fixed across every entry so the title column always starts at the same position.
+/// - logo-height (length): The height of the logo's bounding box. Fixed across every entry so a landscape wordmark and a near-square icon read as the same visual weight.
+/// - tags (array): The tags of the entry.
+/// - color (color): (optional) override the accent color for this entry.
+/// - before-skip (length): (optional) override `[layout] before_entry_skip` for this entry only, e.g. to pull two entries closer together or push them further apart.
+/// - metadata (dictionary): (optional) the metadata read from the TOML file.
+/// - awesome-colors (dictionary): (optional) the awesome colors of the CV.
+///
+/// ```example
+/// >>> #set text(font: "Source Sans 3")
+/// #block(width: 300pt)[
+///   #cv-entry-wide-logo(
+///     title: [Digital Hardware Engineer],
+///     society: [Synthara],
+///     date: [2020 - 2021],
+///     description: list(
+///       [Analyzed datasets with SQL and Python],
+///     ),
+///     tags: ("Python", "SQL"),
+///     metadata: _metadata,
+///   )
+/// ]
+/// ```
+/// -> content
+#let cv-entry-wide-logo(
+  title: "Title",
+  date: "Date",
+  society: none,
+  grade: none,
+  description: "",
+  logo: "",
+  logo-width: 15%,
+  logo-height: 12pt,
+  tags: (),
+  color: none,
+  before-skip: none,
+  metadata: none,
+  awesome-colors: _awesome-colors,
+) = context {
+  let metadata = _resolve-component-metadata(metadata)
+  let params = _prepare-entry-params(metadata, awesome-colors, color: color, before-skip: before-skip)
+
+  _make-cv-entry(
+    "full-wide-logo",
+    params,
+    title: title,
+    date: date,
+    society: society,
+    grade: grade,
+    description: description,
+    logo: logo,
+    logo-width: logo-width,
+    logo-height: logo-height,
     tags: tags,
     metadata: metadata,
   )
@@ -816,6 +1005,7 @@
 /// - location (str): The location of the entry.
 /// - logo (content | str): The logo of the society. If empty, no logo will be displayed.
 /// - color (color): (optional) override the accent color for this entry.
+/// - before-skip (length): (optional) override `[layout] before_entry_skip` for this entry only, e.g. to pull two entries closer together or push them further apart.
 /// - metadata (dictionary): (optional) the metadata read from the TOML file.
 /// - awesome-colors (dictionary): (optional) the awesome colors of the CV.
 ///
@@ -843,6 +1033,7 @@
   location: "Location",
   logo: "",
   color: none,
+  before-skip: none,
   metadata: none,
   awesome-colors: _awesome-colors,
 ) = context {
@@ -851,7 +1042,7 @@
     panic("display_entry_society_first must be true to use cv-entry-start")
   }
 
-  let params = _prepare-entry-params(metadata, awesome-colors, color: color)
+  let params = _prepare-entry-params(metadata, awesome-colors, color: color, before-skip: before-skip)
 
   _make-cv-entry(
     "start",
@@ -874,6 +1065,7 @@
 /// - description (str | array): The description of the entry. Can be a string or an array of strings.
 /// - tags (array): The tags of the entry.
 /// - color (color): (optional) override the accent color for this entry.
+/// - before-skip (length): (optional) override `[layout] before_entry_skip` for this entry only, e.g. to pull two entries closer together or push them further apart.
 /// - metadata (dictionary): (optional) the metadata read from the TOML file.
 /// - awesome-colors (dictionary): (optional) the awesome colors of the CV.
 /// -> content
@@ -883,6 +1075,7 @@
   description: "",
   tags: (),
   color: none,
+  before-skip: none,
   metadata: none,
   awesome-colors: _awesome-colors,
 ) = context {
@@ -891,7 +1084,7 @@
     panic("display_entry_society_first must be true to use cv-entry-continued")
   }
 
-  let params = _prepare-entry-params(metadata, awesome-colors, color: color)
+  let params = _prepare-entry-params(metadata, awesome-colors, color: color, before-skip: before-skip)
 
   _make-cv-entry(
     "continued",
@@ -996,22 +1189,32 @@
 /// Add a skill tag to the CV.
 ///
 /// - skill (str | content): The skill to be displayed.
+/// - color (color): (optional) an accent color for the tag. When set, the tag
+///   is outlined instead of filled: a pale tint of `color` as background, a
+///   thin `color` border, and `color` text. When `none` (the default), the
+///   tag keeps the plain filled-gray look.
 ///
 /// ```example
 /// >>> #set text(font: "Source Sans 3")
 /// #block(width: 300pt)[
 ///   #cv-skill-tag([AWS Certified])
-///   #cv-skill-tag([Python])
+///   #cv-skill-tag([Python], color: blue)
 /// ]
 /// ```
 /// -> content
-#let cv-skill-tag(skill) = {
+#let cv-skill-tag(skill, color: none) = {
   let entry-tag-style(str) = {
-    align(center, text(size: 10pt, weight: "regular", str))
+    align(center, text(
+      size: 9pt,
+      weight: "regular",
+      fill: if color != none { color } else { black },
+      str,
+    ))
   }
   box(
-    inset: (x: 0.5em, y: 0.5em),
-    fill: _regular-colors.subtlegray,
+    inset: (x: 0.55em, y: 0.35em),
+    fill: if color != none { color.lighten(85%) } else { _regular-colors.subtlegray },
+    stroke: if color != none { 0.6pt + color } else { none },
     radius: 3pt,
     entry-tag-style(skill),
   )
@@ -1117,12 +1320,16 @@
   show bibliography: it => publication-style(it)
   set bibliography(title: none, style: ref-style, full: ref-full)
 
-  if ref-full {
-    bib
-  } else {
-    for key in key-list {
-      cite(label(key), form: none)
+  // Inset horizontally so entries sit indented relative to the full-width
+  // section header/rule above them, matching cv-entry.
+  pad(x: 20pt, {
+    if ref-full {
+      bib
+    } else {
+      for key in key-list {
+        cite(label(key), form: none)
+      }
+      bib
     }
-    bib
-  }
+  })
 }
